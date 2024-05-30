@@ -66,6 +66,8 @@ async fn run() -> Result<()> {
                     &download_args.snapshot_id,
                     &download_args.file,
                     progress_bar?,
+                    download_args.threads,
+                    download_args.retries,
                 )
                 .await
                 .context(error::DownloadSnapshotSnafu)?;
@@ -155,7 +157,7 @@ fn build_progress_bar(no_progress: bool, verb: &str) -> Result<Option<ProgressBa
 async fn build_client_config(
     region: Option<String>,
     profile: Option<String>,
-    endpoint: Option<String>,
+    endpoint: Option<String>
 ) -> SdkConfig {
     let config: aws_config::ConfigLoader = match (region, &profile) {
         (Some(region), _) => {
@@ -264,6 +266,14 @@ struct DownloadArgs {
     #[argh(switch)]
     /// disable the progress bar
     no_progress: bool,
+
+    #[argh(option, default = "64")]
+    /// the number of cuncurrent snapshot blocks to download
+    threads: usize,
+
+    #[argh(option, default = "3")]
+    /// the number of times to retry a failed snapshot block downlod
+    retries: u8,
 }
 
 #[derive(FromArgs, PartialEq, Debug)]

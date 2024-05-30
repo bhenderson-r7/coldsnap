@@ -30,8 +30,6 @@ pub struct Error(error::Error);
 type Result<T> = std::result::Result<T, Error>;
 
 const GIBIBYTE: i64 = 1024 * 1024 * 1024;
-const SNAPSHOT_BLOCK_WORKERS: usize = 64;
-const SNAPSHOT_BLOCK_ATTEMPTS: u8 = 3;
 const SHA256_ALGORITHM: &str = "SHA256";
 
 // ListSnapshotBlocks allows us to specify how many blocks are returned in each
@@ -60,6 +58,8 @@ impl SnapshotDownloader {
         snapshot_id: &str,
         path: P,
         progress_bar: Option<ProgressBar>,
+        threads: usize,
+        retries: u8,
     ) -> Result<()> {
         let path = path.as_ref();
         let _ = path
@@ -80,7 +80,7 @@ impl SnapshotDownloader {
 
         debug!("Writing {}G to {}...", snapshot.volume_size, path.display());
         target.grow(snapshot.volume_size * GIBIBYTE).await?;
-        self.write_snapshot_blocks(snapshot, target.write_path()?, progress_bar)
+        self.write_snapshot_blocks(snapshot, target.write_path()?, progress_bar, threads, retries)
             .await?;
         target.finalize()?;
 
@@ -92,6 +92,8 @@ impl SnapshotDownloader {
         snapshot: Snapshot,
         write_path: &Path,
         progress_bar: Option<ProgressBar>,
+        threads: usize,
+        retries: u8,
     ) -> Result<()> {
         // Collect errors encountered while downloading blocks, since we can't
         // return a result directly through `for_each_concurrent`.
@@ -132,16 +134,16 @@ impl SnapshotDownloader {
         // New threads will be created by the runtime as needed, but we'll
         // only process this many blocks at once to limit resource usage.
         let download = stream::iter(block_contexts).for_each_concurrent(
-            SNAPSHOT_BLOCK_WORKERS,
+            threads,
             |context| async move {
-                for i in 0..SNAPSHOT_BLOCK_ATTEMPTS {
+                for i in 0..retries {
                     let block_result = self.download_block(&context).await;
                     let mut block_errors = context.block_errors.lock().expect("poisoned");
                     if let Err(e) = block_result {
                         debug!(
                             "Error downloading block, attempt {} of {}",
                             i + 1,
-                            SNAPSHOT_BLOCK_ATTEMPTS
+                            retries
                         );
                         block_errors.insert(context.block_index, e);
                         continue;
